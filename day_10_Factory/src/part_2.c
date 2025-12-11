@@ -4,6 +4,8 @@
 // Instead I should start checking permutations using the buttons with the biggest impact (buttons with the most connection)
 // Only when I overshoot should I start checking buttons with fewer connections
 // buttons with equal connections should be checked together
+//
+// !!! OVERSHOOTING IS ALLOWED!
 
 #include <assert.h>
 #include <limits.h>
@@ -321,7 +323,7 @@ int main()
 
                 //printf(" -> ");
 
-                bool areJoltagesLevelsCorrect = true;
+                bool areJoltagesLevelsHighEnough = true;
                 bool isJoltagesOvershot = false;
 
                 for (int j = 0; j < machine.numJoltages; ++j)
@@ -332,18 +334,18 @@ int main()
                     {
                         //printf("[OVERFLOW | exceeds %d] \n", machine.joltages[j]);
                         isJoltagesOvershot = true;
-                        areJoltagesLevelsCorrect = false;
+                        areJoltagesLevelsHighEnough = false;
                         break;
                     }
 
-                    if (joltages[j] != machine.joltages[j])
+                    if (joltages[j] < machine.joltages[j])
                     {
-                        areJoltagesLevelsCorrect = false;
+                        areJoltagesLevelsHighEnough = false;
                         break;
                     }
                 }
 
-                if (areJoltagesLevelsCorrect)
+                if (areJoltagesLevelsHighEnough)
                 {
                     printf(" -> CORRECT\n");
                     printf("After %d button presses\n---------------------------------------\n", numButtonPresses);
