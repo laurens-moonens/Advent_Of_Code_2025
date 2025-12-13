@@ -46,7 +46,7 @@ typedef struct Node
 typedef struct ColumnHeader
 {
     char name[12];
-    unsigned int size;
+    int32_t size;
     Node* columnHeaderNode;
     unsigned int columnIndex;
 } ColumnHeader;
@@ -70,19 +70,26 @@ void GetOccupancyMaskForShape(bool* occupancyMask, unsigned int regionSizeX, uns
     }
 }
 
-Node* ChooseColumn(const DLXGrid* dlxGrid)
+Node* ChooseColumn(const DLXGrid* dlxGrid, unsigned int maxIndex)
 {
-    unsigned int maxSize = UINT_MAX;
+    int maxSize = INT_MAX;
     Node* chosenNode = dlxGrid->headerNode.right;
 
-    for (Node* node = dlxGrid->headerNode.right; node != dlxGrid->headerNode.right; node = node->right)
+    for (Node* node = dlxGrid->headerNode.right; node != &dlxGrid->headerNode; node = node->right)
     {
-        if (node->columnHeader->size < maxSize)
+        if (node->columnHeader->columnIndex > maxIndex)
+        {
+            return chosenNode;
+        }
+
+        if (node->columnHeader->size < maxSize && node->columnHeader->size > 0)
         {
             chosenNode = node;
             maxSize = node->columnHeader->size;
         }
     }
+
+    //printf("Chose node %s with %d options\n", chosenNode->columnHeader->name, chosenNode->columnHeader->size);
 
     return chosenNode;
 }
@@ -152,6 +159,11 @@ void CoverColumn(Node* node)
         {
             RemoveRowNode(nodeRight);
             nodeRight->columnHeader->size--;
+            if (nodeRight->columnHeader->size < 0)
+            {
+                printf("COLUMN SIZE BELOW 0\n");
+                exit(0);
+            }
         }
     }
 }
@@ -220,7 +232,7 @@ bool SolveDLX(const DLXGrid* dlxGrid, Node** chosenNodes, uint64_t* numChosenNod
         return true;
     }
 
-    Node* chosenColumnNode = ChooseColumn(dlxGrid);
+    Node* chosenColumnNode = ChooseColumn(dlxGrid, region->numDistinctPresents - 1);
 
     CoverColumn(chosenColumnNode);
 
@@ -583,26 +595,65 @@ int main()
             }
         }
 
+        unsigned int shapeIndex = region.distinctRequiredPresents[0];
+        unsigned int nthEntryOfThisShape = 0;
+
+        unsigned int maxPositionIndex = ((region.y - PRESENT_DIMENSIONS) + 1) * ((region.x - PRESENT_DIMENSIONS) + 1);
+        //printf("MaxPositionIndex %d\n", maxPositionIndex);
+
         // for every present column
         for (Node* columnHeaderNode = dlxGrid.headerNode.right; columnHeaderNode != &dlxGrid.headerNode && columnHeaderNode->columnHeader->columnIndex < region.numDistinctPresents; columnHeaderNode = columnHeaderNode->right)
         {
             Node* prevUpNode = columnHeaderNode;
-            printf("Column index [%d] -> shape %d\n", columnHeaderNode->columnHeader->columnIndex, region.distinctRequiredPresents[columnHeaderNode->columnHeader->columnIndex]);
-            PresentOrientations presentOrientation = presents[region.distinctRequiredPresents[columnHeaderNode->columnHeader->columnIndex]];
+            unsigned int currentShapeIndex = region.distinctRequiredPresents[columnHeaderNode->columnHeader->columnIndex];
+            //printf("Column index [%d] -> shape %d\n", columnHeaderNode->columnHeader->columnIndex, currentShapeIndex);
+            PresentOrientations presentOrientation = presents[currentShapeIndex];
 
-            // for every possible position of that present
-            // TODO: include different orientations
-            for (int posY = 0; posY < (region.y - PRESENT_DIMENSIONS) + 1; ++posY)
+            unsigned int numPresentsOfThisShape = region.requiredPresentsPerIndex[currentShapeIndex];
+
+            // limit how many positions to check
+            // identical shapes don't need to be checked for every position
+            unsigned int startPosition = nthEntryOfThisShape;
+            unsigned int endPosition = maxPositionIndex - ((numPresentsOfThisShape - 1) - nthEntryOfThisShape);
+
+            //printf("Entry %d if shape %d\n", nthEntryOfThisShape, currentShapeIndex);
+            //printf("START %d END %d\n", startPosition, endPosition);
+
+            for (int o = 0; o < presentOrientation.numOrientations; ++o)
             {
-                for (int posX = 0; posX < (region.x - PRESENT_DIMENSIONS) + 1; ++posX)
+                unsigned int gridIndexInArray = 0;
+
+                // for every possible position of that present
+                // TODO: include different orientations
+                for (int posY = 0; posY < (region.y - PRESENT_DIMENSIONS) + 1; ++posY)
                 {
-                    for (int o = 0; o < presentOrientation.numOrientations; ++o)
+                    for (int posX = 0; posX < (region.x - PRESENT_DIMENSIONS) + 1; ++posX)
                     {
+                        //printf("Index = %d\n", gridIndexInArray);
+                        if (gridIndexInArray < startPosition || gridIndexInArray >= endPosition)
+                        {
+                            //printf("Outside of range %d-%d\n", startPosition, endPosition);
+                            gridIndexInArray++;
+                            continue;
+                        }
+
+                        gridIndexInArray++;
+
                         Node* newSelectedPresentNode = &dlxGrid.nodes[numNodes++];
                         InsertNode(newSelectedPresentNode, newSelectedPresentNode, newSelectedPresentNode, prevUpNode, columnHeaderNode, columnHeaderNode->columnHeader);
 
                         bool* occupancyMask = calloc(region.y * region.x, sizeof(bool));
                         GetOccupancyMaskForShape(occupancyMask, region.x, region.y, presentOrientation.orientations[o], posX, posY);
+
+                        //for (int y = 0; y < region.y; ++y)
+                        //{
+                        //    for (int x = 0; x < region.x; ++x)
+                        //    {
+                        //        printf("%c", occupancyMask[(y * region.x) + x] ? '#' : '.');
+                        //    }
+                        //    printf("\n");
+                        //}
+                        //printf("\n");
 
                         prevUpNode->down = newSelectedPresentNode;
                         newSelectedPresentNode->up = prevUpNode;
@@ -626,7 +677,9 @@ int main()
                                 InsertNode(newOccupancyNode, prevLeftNode, newSelectedPresentNode, tileColumnNode->up, tileColumnNode, tileColumnNode->columnHeader);
                                 prevLeftNode = newOccupancyNode;
                             }
+                            //printf("\n");
                         }
+                        //printf("\n");
 
                         free(occupancyMask);
 
@@ -637,6 +690,16 @@ int main()
 
             prevUpNode->down = columnHeaderNode;
             columnHeaderNode->up = prevUpNode;
+
+            if (currentShapeIndex == shapeIndex)
+            {
+                nthEntryOfThisShape++;
+            }
+            else
+            {
+                shapeIndex = currentShapeIndex;
+                nthEntryOfThisShape = 0;
+            }
         }
 
         for (node = dlxGrid.headerNode.right; node != &dlxGrid.headerNode; node = node->right)
@@ -645,6 +708,9 @@ int main()
             printf("\t LEFT = %s\n", node->left->columnHeader->name);
             printf("\t RIGHT = %s\n", node->right->columnHeader->name);
         }
+
+        //continue;
+        //return 0;
 
         Node* chosenNodes[region.numDistinctPresents];
         uint64_t numChosenNodes = 0;
