@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -71,37 +72,49 @@ void GetOccupancyMaskForShape(bool* occupancyMask, unsigned int regionSizeX, uns
 
 Node* ChooseColumn(const DLXGrid* dlxGrid)
 {
-    return dlxGrid->headerNode.right;
+    unsigned int maxSize = UINT_MAX;
+    Node* chosenNode = dlxGrid->headerNode.right;
+
+    for (Node* node = dlxGrid->headerNode.right; node != dlxGrid->headerNode.right; node = node->right)
+    {
+        if (node->columnHeader->size < maxSize)
+        {
+            chosenNode = node;
+            maxSize = node->columnHeader->size;
+        }
+    }
+
+    return chosenNode;
 }
 
 void RemoveColumnNode(Node* nodeToRemove)
 {
-    printf("Removing column node %s\n", nodeToRemove->columnHeader->name);
+    //printf("Removing column node %s\n", nodeToRemove->columnHeader->name);
     nodeToRemove->left->right = nodeToRemove->right;
-    printf("Set right node of %s to %s\n", nodeToRemove->left->columnHeader->name, nodeToRemove->left->right->columnHeader->name);
+    //printf("Set right node of %s to %s\n", nodeToRemove->left->columnHeader->name, nodeToRemove->left->right->columnHeader->name);
     nodeToRemove->right->left = nodeToRemove->left;
-    printf("Set left node of %s to %s\n", nodeToRemove->right->columnHeader->name, nodeToRemove->right->left->columnHeader->name);
+    //printf("Set left node of %s to %s\n", nodeToRemove->right->columnHeader->name, nodeToRemove->right->left->columnHeader->name);
 
-    printf("Right node of %s is %s\n", nodeToRemove->left->columnHeader->name, nodeToRemove->left->right->columnHeader->name);
+    //printf("Right node of %s is %s\n", nodeToRemove->left->columnHeader->name, nodeToRemove->left->right->columnHeader->name);
 }
 
 void RemoveRowNode(Node* nodeToRemove)
 {
-    printf("Removing row node %s\n", nodeToRemove->columnHeader->name);
+    //printf("Removing row node %s\n", nodeToRemove->columnHeader->name);
     nodeToRemove->up->down = nodeToRemove->down;
     nodeToRemove->down->up = nodeToRemove->up;
 }
 
 void RestoreColumnNode(Node* nodeToRestore)
 {
-    printf("Restoring column node %s\n", nodeToRestore->columnHeader->name);
+    //printf("Restoring column node %s\n", nodeToRestore->columnHeader->name);
     nodeToRestore->left->right = nodeToRestore;
     nodeToRestore->right->left = nodeToRestore;
 }
 
 void RestoreRowNode(Node* nodeToRestore)
 {
-    printf("Restoring row node %s\n", nodeToRestore->columnHeader->name);
+    //printf("Restoring row node %s\n", nodeToRestore->columnHeader->name);
     nodeToRestore->down->up = nodeToRestore;
     nodeToRestore->up->down = nodeToRestore;
 }
@@ -129,7 +142,7 @@ void InsertNode(Node* newNode, Node* leftNode, Node* rightNode, Node* upNode, No
 void CoverColumn(Node* node)
 {
     Node* columnHeaderNode = node->columnHeader->columnHeaderNode;
-    printf("Cover column %s\n", columnHeaderNode->columnHeader->name);
+    //printf("Cover column %s\n", columnHeaderNode->columnHeader->name);
     RemoveColumnNode(columnHeaderNode);
     Node* nodeDown = columnHeaderNode->down;
 
@@ -158,8 +171,50 @@ void UncoverColumn(Node* node)
     RestoreColumnNode(columnHeaderNode);
 }
 
-bool SolveDLX(const DLXGrid* dlxGrid, Node** chosenNodes, uint64_t* numChoseNodes, const uint64_t numMandatoryItems)
+void PrintDLXState(const DLXGrid* dlxGrid, Node** const chosenNodes, uint64_t numChosenNodes, const Region* region)
 {
+    char grid[region->y * region->x];
+    memset(grid, '.', sizeof(grid));
+
+    for (int n = 0; n < numChosenNodes; ++n)
+    {
+        const Node* presentNode = chosenNodes[n];
+        for (Node* occupancyNode = presentNode->right; occupancyNode != presentNode; occupancyNode = occupancyNode->right)
+        {
+            int gridIndex = occupancyNode->columnHeader->columnIndex - region->numDistinctPresents;
+
+            if (grid[gridIndex] != '.')
+            {
+                grid[gridIndex] = '!' + n;
+            }
+            else
+            {
+                grid[gridIndex] = 'A' + n;
+            }
+        }
+    }
+
+    for (int y = 0; y < region->y; ++y)
+    {
+        for (int x = 0; x < region->x; ++x)
+        {
+            printf("%c", grid[(y * region->x) + x]);
+        }
+        printf("\n");
+    }
+}
+
+bool SolveDLX(const DLXGrid* dlxGrid, Node** chosenNodes, uint64_t* numChosenNodes, const uint64_t numMandatoryItems, uint64_t* numTries, const Region* region)
+{
+    if (*numTries % 100000 == 0)
+    {
+        printf("%lu tries\n", *numTries);
+        PrintDLXState(dlxGrid, chosenNodes, *numChosenNodes, region);
+        printf("\n");
+    }
+
+    (*numTries)++;
+
     if (dlxGrid->headerNode.right == &dlxGrid->headerNode || dlxGrid->headerNode.right->columnHeader->columnIndex >= numMandatoryItems)
     {
         return true;
@@ -167,25 +222,23 @@ bool SolveDLX(const DLXGrid* dlxGrid, Node** chosenNodes, uint64_t* numChoseNode
 
     Node* chosenColumnNode = ChooseColumn(dlxGrid);
 
-    printf("Chose column %s\n", chosenColumnNode->columnHeader->name);
-    printf("RIGHT OF HEADER before covering column = %s\n", dlxGrid->headerNode.right->columnHeader->name);
     CoverColumn(chosenColumnNode);
-    printf("RIGHT OF HEADER after covering column = %s\n", dlxGrid->headerNode.right->columnHeader->name);
 
     for (Node* chosenRowNode = chosenColumnNode->down; chosenRowNode != chosenColumnNode; chosenRowNode = chosenRowNode->down)
     {
-        chosenNodes[(*numChoseNodes)++] = chosenRowNode;
+        chosenNodes[(*numChosenNodes)++] = chosenRowNode;
 
         for (Node* affectedColumnRight = chosenRowNode->right; affectedColumnRight != chosenRowNode; affectedColumnRight = affectedColumnRight->right)
         {
             CoverColumn(affectedColumnRight);
         }
 
-        bool foundSolution = SolveDLX(dlxGrid, chosenNodes, numChoseNodes, numMandatoryItems);
+        //return false;
+        bool foundSolution = SolveDLX(dlxGrid, chosenNodes, numChosenNodes, numMandatoryItems, numTries, region);
         if (foundSolution)
             return true;
 
-        (*numChoseNodes)--;
+        (*numChosenNodes)--;
 
         for (Node* affectedColumnLeft = chosenRowNode->left; affectedColumnLeft != chosenRowNode; affectedColumnLeft = affectedColumnLeft->left)
         {
@@ -198,9 +251,96 @@ bool SolveDLX(const DLXGrid* dlxGrid, Node** chosenNodes, uint64_t* numChoseNode
     return false;
 }
 
+PresentOrientations GenerateShapeOrientations(Present defaultOrientation)
+{
+    PresentOrientations result = {0};
+
+    result.orientations[result.numOrientations++] = defaultOrientation;
+
+    Present prevRotation = defaultOrientation;
+
+    for (int r = 0; r < 4; ++r)
+    {
+        Present flip = {0};
+
+        for (int y = 0; y < PRESENT_DIMENSIONS; ++y)
+        {
+            for (int x = 0; x < PRESENT_DIMENSIONS; ++x)
+            {
+                flip.occupiedSpaces[y][x] = prevRotation.occupiedSpaces[y][PRESENT_DIMENSIONS - (x + 1)];
+            }
+        }
+
+        bool isDuplicate = false;
+        for (int o = 0; o < result.numOrientations; ++o)
+        {
+            if (memcmp(flip.occupiedSpaces, result.orientations[o].occupiedSpaces, sizeof(flip.occupiedSpaces)) == 0)
+            {
+                isDuplicate = true;
+                break;
+            }
+        }
+
+        if (!isDuplicate)
+        {
+            result.orientations[result.numOrientations++] = flip;
+        }
+
+        for (int y = 0; y < PRESENT_DIMENSIONS; ++y)
+        {
+            for (int x = 0; x < PRESENT_DIMENSIONS; ++x)
+            {
+                flip.occupiedSpaces[y][x] = prevRotation.occupiedSpaces[PRESENT_DIMENSIONS - (y + 1)][x];
+            }
+        }
+
+        isDuplicate = false;
+        for (int o = 0; o < result.numOrientations; ++o)
+        {
+            if (memcmp(flip.occupiedSpaces, result.orientations[o].occupiedSpaces, sizeof(flip.occupiedSpaces)) == 0)
+            {
+                isDuplicate = true;
+                break;
+            }
+        }
+
+        if (!isDuplicate)
+        {
+            result.orientations[result.numOrientations++] = flip;
+        }
+
+        Present rotation = {0};
+        for (int y = -1; y <= 1; ++y)
+        {
+            for (int x = -1; x <= 1; ++x)
+            {
+                rotation.occupiedSpaces[y + 1][x + 1] = prevRotation.occupiedSpaces[-x + 1][y + 1];
+            }
+        }
+
+        isDuplicate = false;
+        for (int o = 0; o < result.numOrientations; ++o)
+        {
+            if (memcmp(rotation.occupiedSpaces, result.orientations[o].occupiedSpaces, sizeof(rotation.occupiedSpaces)) == 0)
+            {
+                isDuplicate = true;
+                break;
+            }
+        }
+
+        if (!isDuplicate)
+        {
+            result.orientations[result.numOrientations++] = rotation;
+            prevRotation = rotation;
+        }
+    }
+
+    return result;
+}
+
 int main()
 {
-    char* filePath = "../resources/example.txt";
+    char* filePath = "../resources/input.txt";
     FILE* file = fopen(filePath, "r");
 
     if (file == NULL)
@@ -239,7 +379,8 @@ int main()
             }
         }
 
-        presents[i].orientations[presents[i].numOrientations++] = defaultOrientation;
+        PresentOrientations orientations = GenerateShapeOrientations(defaultOrientation);
+        presents[i] = orientations;
 
         str = fgets(lineBuffer, MAX_LINE_SIZE, file);
     }
@@ -305,26 +446,33 @@ int main()
 
     fclose(file);
 
-    for (int i = 0; i < NUM_PRESENT_SHAPES; ++i)
-    {
-        printf("%d\n", i);
+    //for (int i = 0; i < NUM_PRESENT_SHAPES; ++i)
+    //{
+    //    printf("%d\n", i);
 
-        PresentOrientations present = presents[i];
+    //    PresentOrientations present = presents[i];
 
-        for (int y = 0; y < PRESENT_DIMENSIONS; ++y)
-        {
-            for (int x = 0; x < PRESENT_DIMENSIONS; ++x)
-            {
-                printf("%c", present.orientations[0].occupiedSpaces[y][x] ? '#' : '.');
-            }
+    //    for (int o = 0; o < present.numOrientations; ++o)
+    //    {
+    //        printf("Orientation %d\n", o);
+    //        for (int y = 0; y < PRESENT_DIMENSIONS; ++y)
+    //        {
+    //            for (int x = 0; x < PRESENT_DIMENSIONS; ++x)
+    //            {
+    //                printf("%c", present.orientations[o].occupiedSpaces[y][x] ? '#' : '.');
+    //            }
 
-            printf("\n");
-        }
-        printf("\n");
-    }
+    //            printf("\n");
+    //        }
+    //        printf("\n");
+    //    }
+    //    printf("\n");
+    //}
 
-    //for (int r = 0; r < numRegions; ++r)
-    for (int r = 0; r < 1; ++r)
+    unsigned int numSolvableRegions = 0;
+
+    for (int r = 0; r < numRegions; ++r)
+    //for (int r = 0; r < 1; ++r)
     {
         Region region = regions[r];
 
@@ -360,15 +508,17 @@ int main()
         //                bool* occupancyMask = calloc(region.y * region.x, sizeof(bool));
         //                GetOccupancyMaskForShape(occupancyMask, region.x, region.y, present, posX, posY);
 
-        //                //for (int y = 0; y < region.y; ++y)
-        //                //{
-        //                //    for (int x = 0; x < region.x; ++x)
-        //                //    {
-        //                //        printf("%c", occupancyMask[((y)*region.x) + x] ? '#' : '.');
-        //                //    }
-        //                //    printf("\n");
-        //                //}
-        //                //printf("\n");
+        //                for (int y = 0; y < region.y; ++y)
+        //                {
+        //                    for (int x = 0; x < region.x; ++x)
+        //                    {
+        //                        printf("%c", occupancyMask[(y * region.x) + x] ? '#' : '.');
+        //                    }
+        //                    printf("\n");
+        //                }
+        //                printf("\n");
+
+        //                free(occupancyMask);
         //            }
         //        }
         //    }
@@ -379,6 +529,7 @@ int main()
 
         printf("%lu items\n", numItems);
         printf("%lu options\n", numOptions);
+        printf("%d distinct presents\n", region.numDistinctPresents);
 
         DLXGrid dlxGrid = {0};
         dlxGrid.headerNode.columnHeader = &dlxGrid.headerNodeHeader;
@@ -386,7 +537,7 @@ int main()
         memcpy(dlxGrid.headerNodeHeader.name, headerName, strlen(headerName));
         uint64_t numNodes = 0;
         uint64_t numColumns = 0;
-        uint64_t numNodesToAllocate = numOptions + numItems + 1 + (numDistinctPresentPositions * region.numDistinctPresents * PRESENT_DIMENSIONS * PRESENT_DIMENSIONS);
+        uint64_t numNodesToAllocate = numOptions + numItems + 1 + (numDistinctPresentPositions * region.numDistinctPresents * PRESENT_DIMENSIONS * PRESENT_DIMENSIONS * NUM_ORIENTATIONS);
         printf("Allocating %lu nodes = %zu bytes\n", numNodesToAllocate, numNodesToAllocate * sizeof(Node));
         dlxGrid.nodes = calloc(numNodesToAllocate, sizeof(Node));
         dlxGrid.columnHeaders = calloc(numItems, sizeof(ColumnHeader));
@@ -399,6 +550,7 @@ int main()
         // populate column headers for distinct presents
         for (int c = 0; c < region.numDistinctPresents; ++c, node = node->right)
         {
+            PresentOrientations presentOrientations = presents[region.distinctRequiredPresents[c]];
             ColumnHeader* columnHeader = &dlxGrid.columnHeaders[numColumns++];
             columnHeader->size = 0;
             columnHeader->columnIndex = c;
@@ -422,6 +574,7 @@ int main()
                 columnHeader->size = 0;
                 columnHeader->columnIndex = index;
                 sprintf(columnHeader->name, "(%d, %d)", x, y);
+                printf("%s [%d]\n", columnHeader->name, index);
 
                 Node* newNode = &dlxGrid.nodes[numNodes++];
                 columnHeader->columnHeaderNode = newNode;
@@ -449,26 +602,22 @@ int main()
                         InsertNode(newSelectedPresentNode, newSelectedPresentNode, newSelectedPresentNode, prevUpNode, columnHeaderNode, columnHeaderNode->columnHeader);
 
                         bool* occupancyMask = calloc(region.y * region.x, sizeof(bool));
-                        GetOccupancyMaskForShape(occupancyMask, region.x, region.y, presentOrientation.orientations[0], posX, posY);
+                        GetOccupancyMaskForShape(occupancyMask, region.x, region.y, presentOrientation.orientations[o], posX, posY);
 
                         prevUpNode->down = newSelectedPresentNode;
                         newSelectedPresentNode->up = prevUpNode;
 
                         Node* prevLeftNode = newSelectedPresentNode;
 
-                        for (int y = 0; y < region.y; ++y)
+                        for (int y = 0; y < PRESENT_DIMENSIONS; ++y)
                         {
-                            for (int x = 0; x < region.x; ++x)
+                            for (int x = 0; x < PRESENT_DIMENSIONS; ++x)
                             {
                                 uint64_t tileIndex = ((y + posY) * region.x) + x + posX;
-                                if (occupancyMask[tileIndex] == false)
-                                {
-                                    printf(".");
-                                    continue;
-                                }
-                                printf("#");
-
                                 uint64_t tileColumnNodeIndex = region.numDistinctPresents + tileIndex;
+
+                                if (occupancyMask[tileIndex] == false)
+                                    continue;
 
                                 Node* tileColumnNode = dlxGrid.columnHeaders[tileColumnNodeIndex].columnHeaderNode;
                                 assert(tileColumnNode->columnHeader->columnIndex == tileColumnNodeIndex);
@@ -477,8 +626,9 @@ int main()
                                 InsertNode(newOccupancyNode, prevLeftNode, newSelectedPresentNode, tileColumnNode->up, tileColumnNode, tileColumnNode->columnHeader);
                                 prevLeftNode = newOccupancyNode;
                             }
-                            printf("\n");
                         }
+
+                        free(occupancyMask);
 
                         prevUpNode = newSelectedPresentNode;
                     }
@@ -498,10 +648,12 @@ int main()
 
         Node* chosenNodes[region.numDistinctPresents];
         uint64_t numChosenNodes = 0;
+        uint64_t numTries = 0;
 
-        bool foundSolution = SolveDLX(&dlxGrid, chosenNodes, &numChosenNodes, region.numDistinctPresents);
+        bool foundSolution = SolveDLX(&dlxGrid, chosenNodes, &numChosenNodes, region.numDistinctPresents, &numTries, &region);
         if (foundSolution)
         {
+            numSolvableRegions++;
             printf("\nFOUND SOLUTION\n");
             for (uint64_t i = 0; i < numChosenNodes; ++i)
             {
@@ -522,16 +674,21 @@ int main()
 
         printf("AFTER SOLVE -----------------------\n");
 
-        for (node = dlxGrid.headerNode.right; node != &dlxGrid.headerNode; node = node->right)
-        {
-            printf("%s (%d options) INDEX: %d\n", node->columnHeader->name, node->columnHeader->size, node->columnHeader->columnIndex);
-            printf("\t LEFT = %s\n", node->left->columnHeader->name);
-            printf("\t RIGHT = %s\n", node->right->columnHeader->name);
-        }
+        PrintDLXState(&dlxGrid, chosenNodes, numChosenNodes, &region);
+
+        //for (node = dlxGrid.headerNode.right; node != &dlxGrid.headerNode; node = node->right)
+        //{
+        //    printf("%s (%d options) INDEX: %d\n", node->columnHeader->name, node->columnHeader->size, node->columnHeader->columnIndex);
+        //    printf("\t LEFT = %s\n", node->left->columnHeader->name);
+        //    printf("\t RIGHT = %s\n", node->right->columnHeader->name);
+        //}
 
         printf("\n");
 
+        printf("%u regions are solvable\n", numSolvableRegions);
+
         free(dlxGrid.nodes);
+        free(dlxGrid.columnHeaders);
     }
 
     return 0;
